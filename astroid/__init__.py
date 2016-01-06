@@ -46,6 +46,16 @@ import re
 import sys
 from operator import attrgetter
 
+import enum
+
+
+_Context = enum.Enum('Context', 'Load Store Del')
+Load = _Context.Load
+Store = _Context.Store
+Del = _Context.Del
+del _Context
+
+
 # WARNING: internal imports order matters !
 
 # pylint: disable=redefined-builtin, wildcard-import
@@ -69,7 +79,8 @@ from astroid import raw_building
 # Cache the builtins AST
 raw_building.ast_from_builtins()
 from astroid.interpreter.util import are_exclusive, unpack_infer
-from astroid.tree.scoped_nodes import builtin_lookup, get_locals, replace_child
+from astroid.interpreter.lookup import builtin_lookup
+from astroid.tree.scoped_nodes import get_locals, replace_child
 from astroid.builder import parse
 from astroid.util import Uninferable, YES
 

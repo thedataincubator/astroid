@@ -21,6 +21,9 @@ PY33 = sys.version_info >= (3, 3)
 PY34 = sys.version_info >= (3, 4)
 
 def infer_first(node, context):
+    if node is util.Uninferable:
+        util.reraise(InferenceError())
+
     try:
         value = next(node.infer(context=context))
         if value is util.Uninferable:
@@ -87,35 +90,43 @@ class deque(object):
     def __iter__(self): return self
     def __reversed__(self): return self.iterable[::-1]
     def __getitem__(self, index): pass
+    def __setitem__(self, index, value): pass
+    def __delitem__(self, index): pass
 ''')
 
 
 def pkg_resources_transform():
     return AstroidBuilder(MANAGER).string_build('''
-
 def resource_exists(package_or_requirement, resource_name):
-    pass
+    return get_provider(package_or_requirement).has_resource(resource_name)
 
 def resource_isdir(package_or_requirement, resource_name):
-    pass
+    return get_provider(package_or_requirement).resource_isdir(
+        resource_name)
 
 def resource_filename(package_or_requirement, resource_name):
-    pass
+    return get_provider(package_or_requirement).get_resource_filename(
+        self, resource_name)
 
 def resource_stream(package_or_requirement, resource_name):
-    pass
+    return get_provider(package_or_requirement).get_resource_stream(
+        self, resource_name)
 
 def resource_string(package_or_requirement, resource_name):
-    pass
+    return get_provider(package_or_requirement).get_resource_string(
+        self, resource_name)
 
 def resource_listdir(package_or_requirement, resource_name):
-    pass
+    return get_provider(package_or_requirement).resource_listdir(
+        resource_name)
 
 def extraction_error():
     pass
 
 def get_cache_path(archive_name, names=()):
-    pass
+    extract_path = self.extraction_path or get_default_cache()
+    target_path = os.path.join(extract_path, archive_name+'-tmp', *names)
+    return target_path
 
 def postprocess(tempname, filename):
     pass
@@ -230,7 +241,8 @@ def infer_namedtuple(namedtuple_call, context=None):
     if isinstance(fields, nodes.Const) and isinstance(fields.value, str):
         field_names = tuple(fields.value.replace(',', ' ').split())
     elif isinstance(fields, (nodes.Tuple, nodes.List)):
-        field_names = tuple(infer_first(const, context).value for const in fields.elts)
+        field_names = tuple(infer_first(const, context).value
+                            for const in fields.elts)
     else:
         raise UseInferenceDefault()
 
@@ -441,6 +453,17 @@ def multiprocessing_managers_transform():
             pass
     '''))
 
+def thread_transform():
+    return AstroidBuilder(MANAGER).string_build('''
+class lock(object):
+    def acquire(self, blocking=True):
+        pass
+    def release(self):
+        pass
+
+def Lock():
+    return lock()
+''')
 
 MANAGER.register_transform(nodes.Call, inference_tip(infer_namedtuple),
                            _looks_like_namedtuple)
@@ -454,3 +477,4 @@ register_module_extender(MANAGER, 'subprocess', subprocess_transform)
 register_module_extender(MANAGER, 'multiprocessing.managers',
                          multiprocessing_managers_transform)
 register_module_extender(MANAGER, 'multiprocessing', multiprocessing_transform)
+register_module_extender(MANAGER, 'threading', thread_transform)

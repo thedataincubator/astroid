@@ -131,10 +131,15 @@ def infer_import(self, context=None, asname=True):
     name = context.lookupname
     if name is None:
         raise exceptions.InferenceError(node=self, context=context)
-    if asname:
-        yield self.do_import_module(self.real_name(name))
-    else:
-        yield self.do_import_module(name)
+    try:
+        if asname:
+            real_name = inferenceutil.real_name(self, name)
+            yield inferenceutil.do_import_module(self, real_name)
+        else:
+            yield inferenceutil.do_import_module(self, name)
+    except exceptions.AstroidBuildingError as exc:
+        util.reraise(exceptions.InferenceError(node=self, error=exc,
+                                               context=context))        
 
 
 @infer.register(treeabc.ImportFrom)
@@ -145,8 +150,13 @@ def infer_import_from(self, context=None, asname=True):
     if name is None:
         raise exceptions.InferenceError(node=self, context=context)
     if asname:
-        name = self.real_name(name)
-    module = self.do_import_module()
+        name = inferenceutil.real_name(self, name)
+    try:
+        module = inferenceutil.do_import_module(self, self.modname)
+    except exceptions.AstroidBuildingError as exc:
+        util.reraise(exceptions.InferenceError(node=self, error=exc,
+                                               context=context))
+
     try:
         context = contextmod.copy_context(context)
         context.lookupname = name
@@ -171,9 +181,6 @@ def infer_attribute(self, context=None):
                 yield obj
             context.boundnode = None
         except (exceptions.AttributeInferenceError, exceptions.InferenceError):
-            context.boundnode = None
-        except AttributeError:
-            # XXX method / function
             context.boundnode = None
     # Explicit StopIteration to return error information, see comment
     # in raise_if_nothing_inferred.
@@ -241,6 +248,10 @@ def infer_subscript(self, context=None):
         yield util.Uninferable
         return
 
+    if not hasattr(value, 'getitem'):
+        # TODO: we could have a Sequence protocol class or something similar.
+        raise exceptions.InferenceError(node=self, context=context)
+
     index = next(self.slice.infer(context))
     if index is util.Uninferable:
         yield util.Uninferable
@@ -271,7 +282,7 @@ def infer_subscript(self, context=None):
 
     try:
         assigned = value.getitem(index_value, context)
-    except (IndexError, TypeError, AttributeError) as exc:
+    except (IndexError, TypeError) as exc:
         util.reraise(exceptions.InferenceError(node=self, error=exc,
                                                context=context))
 
@@ -428,6 +439,11 @@ def _is_not_implemented(const):
 
 def _invoke_binop_inference(instance, op, other, context, method_name, nodes):
     """Invoke binary operation inference on the given instance."""
+    if not hasattr(instance, 'getattr'):
+        # The operation is undefined for the given node. We can stop
+        # the inference at this point.
+        raise exceptions.BinaryOperationNotSupportedError
+
     method = instance.getattr(method_name)[0]
     inferred = next(method.infer(context=context))
     return protocols.infer_binary_op(instance, op, other, context, inferred, nodes)
@@ -563,7 +579,7 @@ def _infer_binary_operation(left, right, op, context, flow_factory, nodes):
             results = list(method())
         except exceptions.BinaryOperationNotSupportedError:
             continue
-        except (AttributeError, exceptions.AttributeInferenceError):
+        except exceptions.AttributeInferenceError:
             continue
         except exceptions.InferenceError:
             yield util.Uninferable

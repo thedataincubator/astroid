@@ -1,9 +1,14 @@
-.. image:: https://drone.io/bitbucket.org/logilab/astroid/status.png
-    :alt: drone.io Build Status
-    :target: https://drone.io/bitbucket.org/logilab/astroid
-
 Astroid
 =======
+
+.. image:: https://travis-ci.org/PyCQA/astroid.svg?branch=master
+    :target: https://travis-ci.org/PyCQA/astroid
+
+.. image:: https://ci.appveyor.com/api/projects/status/co3u42kunguhbh6l/branch/master?svg=true
+    :alt: AppVeyor Build Status
+    :target: https://ci.appveyor.com/project/PCManticore/astroid
+
+
 
 What's this?
 ------------

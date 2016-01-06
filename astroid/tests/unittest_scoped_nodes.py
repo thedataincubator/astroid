@@ -28,6 +28,7 @@ import six
 
 from astroid import builder
 from astroid import context
+from astroid.interpreter import lookup
 from astroid import nodes
 from astroid.tree import scoped_nodes
 from astroid import util
@@ -35,11 +36,11 @@ from astroid.exceptions import (
     InferenceError, AttributeInferenceError,
     NoDefault, ResolveError, MroError,
     InconsistentMroError, DuplicateBasesError,
+    TooManyLevelsError,
 )
 from astroid.interpreter.objects import (
     Instance, BoundMethod, UnboundMethod, Generator
 )
-from astroid import __pkginfo__
 from astroid import test_utils
 from astroid.tests import resources
 
@@ -165,6 +166,18 @@ class ModuleNodeTest(ModuleLoader, unittest.TestCase):
         modname = mod.relative_to_absolute_name('', 1)
         self.assertEqual(modname, 'very.multi')
 
+    def test_relative_to_absolute_name_beyond_top_level(self):
+        mod = nodes.Module('a.b.c', '')
+        mod.package = True
+        for level in (5, 4):
+            with self.assertRaises(TooManyLevelsError) as cm:
+                mod.relative_to_absolute_name('test', level)
+
+            expected = ("Relative import with too many levels "
+                        "({level}) for module {name!r}".format(
+                        level=level - 1, name=mod.name))
+            self.assertEqual(expected, str(cm.exception))
+            
     def test_import_1(self):
         data = '''from . import subpackage'''
         sys.path.insert(0, resources.find('data'))
@@ -197,34 +210,15 @@ class ModuleNodeTest(ModuleLoader, unittest.TestCase):
         data = '''irrelevant_variable is irrelevant'''
         astroid = builder.parse(data, 'in_memory')
         with warnings.catch_warnings(record=True):
-            self.assertEqual(astroid.file_stream.read().decode(), data)
+            with astroid.stream() as stream:
+                self.assertEqual(stream.read().decode(), data)
 
     def test_file_stream_physical(self):
         path = resources.find('data/all.py')
         astroid = builder.AstroidBuilder().file_build(path, 'all')
         with open(path, 'rb') as file_io:
-            with warnings.catch_warnings(record=True):
-                self.assertEqual(astroid.file_stream.read(), file_io.read())
-
-    def test_file_stream_api(self):
-        path = resources.find('data/all.py')
-        astroid = builder.AstroidBuilder().file_build(path, 'all')
-        if __pkginfo__.numversion >= (1, 6):
-            # file_stream is slated for removal in astroid 1.6.
-            with self.assertRaises(AttributeError):
-                # pylint: disable=pointless-statement
-                astroid.file_stream
-        else:
-            # Until astroid 1.6, Module.file_stream will emit
-            # PendingDeprecationWarning in 1.4, DeprecationWarning
-            # in 1.5 and finally it will be removed in 1.6, leaving
-            # only Module.stream as the recommended way to retrieve
-            # its file stream.
-            with warnings.catch_warnings(record=True) as cm:
-                warnings.simplefilter("always")
-                self.assertIsNot(astroid.file_stream, astroid.file_stream)
-            self.assertGreater(len(cm), 1)
-            self.assertEqual(cm[0].category, PendingDeprecationWarning)
+            with astroid.stream() as stream:
+                self.assertEqual(stream.read(), file_io.read())
 
     def test_stream_api(self):
         path = resources.find('data/all.py')
@@ -1219,6 +1213,33 @@ class ClassNodeTest(ModuleLoader, unittest.TestCase):
         cls = module['Klass']
         self.assertEqual(cls.slots(), [])
 
+    def test_slots_taken_from_parents(self):
+        module = builder.parse('''
+        class FirstParent(object):
+            __slots__ = ('a', 'b', 'c')
+        class SecondParent(FirstParent):
+            __slots__ = ('d', 'e')
+        class Third(SecondParent):
+            __slots__ = ('d', )
+        ''')
+        cls = module['Third']
+        slots = cls.slots()
+        self.assertEqual(sorted(set(slot.value for slot in slots)),
+                         ['a', 'b', 'c', 'd', 'e'])
+
+    def test_all_ancestors_need_slots(self):
+        module = builder.parse('''
+        class A(object):
+            __slots__ = ('a', )
+        class B(A): pass
+        class C(B):
+            __slots__ = ('a', )
+        ''')
+        cls = module['C']
+        self.assertIsNone(cls.slots())
+        cls = module['B']
+        self.assertIsNone(cls.slots())
+
     def assertEqualMro(self, klass, expected_mro):
         self.assertEqual(
             [member.name for member in klass.mro()],
@@ -1374,7 +1395,7 @@ class ClassNodeTest(ModuleLoader, unittest.TestCase):
         class A(object):
             pass
         """)
-        type_cls = scoped_nodes.builtin_lookup("type")[1][0]
+        type_cls = lookup.builtin_lookup("type")[1][0]
         self.assertEqual(cls.implicit_metaclass(), type_cls)
 
     def test_implicit_metaclass_lookup(self):

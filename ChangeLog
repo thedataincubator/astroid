@@ -2,6 +2,87 @@ Change log for the astroid package (used to be astng)
 =====================================================
 
 --
+    * Dict nodes are constructed with two arguments, keys and values,
+      in the same way that ast.Dict is built.
+
+    * Lambda is no longer at the top of the FunctionDef.
+ 
+      This means that checks such as ``isinstance(node, Lambda)`` will not
+      hold true anymore for Functions.
+      Closes issue #291.
+
+    * mixins are now found in tree.base.
+
+    * Remove do_import_module and real_name from ImportFrom and Import nodes.
+
+      do_import_module was broken for Import, since it was relying on a
+      missing attribute `modname`. do_import_module
+      in fact required all the time for a name parameter to be passed
+      as an argument. The inherent problem is that Import doesn't have
+      an underlying module name, but more of them, in the .names attribute.
+      Thus requiring for do_import_module to pick one name from .names or
+      to return multiple modules was deemed inappropiate and the method
+      became a function which always requires the import name to be given.
+      Closes issue #293.
+
+    * Revert to using printf-style formatting in as_string, in order
+      to avoid a potential problem with encodings when using .format.
+      Closes issue #273. Patch by notsqrt.
+
+    * Add support for inference on threading.Lock
+
+      As a matter of fact, astroid can infer on threading.RLock,
+      threading.Semaphore, but can't do it on threading.Lock (because it comes
+      from an extension module).
+
+    * Add support for handling Uninferable nodes when calling as_string
+
+      Some object, for instance List or Tuple can have, after inference,
+      Uninferable as their elements, happening when their components
+      weren't couldn't be inferred properly. This means that as_string
+      needs to cope with expecting Uninferable nodes part of the other
+      nodes coming for a string transformation. The patch adds a visit
+      method in AsString and ``accept`` on Yes / Uninferable nodes.
+      Closes issue #270.
+
+    * The slots() method conflates all the slots from the ancestors
+      into a list of current and parent slots.
+
+      We're doing this because this is the right semantics of slots,
+      they get inherited, as long as each parent defines a __slots__
+      entry.
+
+    * Some nodes got a new attribute, 'ctx', which tells in which context
+      the said node was used.
+
+      The possible values for the contexts are `Load` ('a'), `Del`
+      ('del a'), `Store` ('a = 4') and the nodes that got the new
+      attribute are Starred, Subscript, List and Tuple. Closes issue #267.
+
+    * relative_to_absolute_name or methods calling it will now raise
+      TooManyLevelsError when a relative import was trying to
+      access something beyond the top-level package.     
+
+    * AstroidBuildingException is now AstroidBuildingError. The first
+      name will exist until astroid 2.0.
+
+    * Add two new exceptions, AstroidImportError and AstroidSyntaxError.
+      They are subclasses of AstroidBuildingException and are raised when
+      a module can't be imported from various reasons.
+      Also do_import_module lets the errors to bubble up without converting
+      them to InferenceError. This particular conversion happens only
+      during the inference.
+
+    * Revert to using printf-style formatting in as_string, in order
+      to avoid a potential problem with encodings when using .format.
+      Closes issue #273. Patch by notsqrt.
+
+    * assigned_stmts methods have the same signature from now on.
+      
+      They used to have different signatures and each one made
+      assumptions about what could be passed to other implementations,
+      leading to various possible crashes when one or more arguments
+      weren't given. Closes issue #277.
 
     * Fix a bug in the inference of Starred nodes, when the left hand
       side of an assignment has an extra element comparing with the

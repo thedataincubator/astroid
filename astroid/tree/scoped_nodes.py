@@ -38,11 +38,11 @@ from astroid.tree import base
 from astroid import context as contextmod
 from astroid import exceptions
 from astroid import decorators as decorators_mod
+from astroid.interpreter import lookup
 from astroid.interpreter import objects
 from astroid.interpreter import runtimeabc
 from astroid.interpreter.util import infer_stmts
 from astroid import manager
-from astroid import mixins
 from astroid.tree import base as treebase
 from astroid.tree import node_classes
 from astroid.tree import treeabc
@@ -129,138 +129,17 @@ def std_special_attributes(self, name, add_locals=True):
     raise exceptions.AttributeInferenceError(target=self, attribute=name)
 
 
-def builtin_lookup(name):
-    """lookup a name into the builtin module
-    return the list of matching statements and the astroid for the builtin
-    module
-    """
-    builtin_astroid = MANAGER.ast_from_module(six.moves.builtins)
-    if name == '__dict__':
-        return builtin_astroid, ()
-    stmts = builtin_astroid.locals.get(name, ())
-    # Use inference to find what AssignName nodes point to in builtins.
-    stmts = [next(s.infer()) if isinstance(s, node_classes.AssignName) else s
-             for s in stmts]
-    return builtin_astroid, stmts
+class QualifiedNameMixin(object):
 
-
-# TODO move this Mixin to mixins.py; problem: 'FunctionDef' in _scope_lookup
-class LocalsDictNodeNG(mixins.LookupMixIn,
-                       treebase.NodeNG):
-    """ this class provides locals handling common to Module, FunctionDef
-    and ClassDef nodes, including a dict like interface for direct access
-    to locals information
-    """
-
-    # attributes below are set by the builder module or by raw factories
-
-    # dictionary of locals with name as key and node defining the local as
-    # value
-
-    @property
-    def locals(self):
-        return MappingProxyType(get_locals(self))
-
-    def qname(self):
-        """return the 'qualified' name of the node, eg module.name,
-        module.class.name ...
-        """
-        if self.parent is None:
-            return self.name
-        return '%s.%s' % (self.parent.frame().qname(), self.name)
-
-    def frame(self):
-        """return the first parent frame node (i.e. Module, FunctionDef or
-        ClassDef)
-
-        """
-        return self
-
-    def _scope_lookup(self, node, name, offset=0):
-        """XXX method for interfacing the scope lookup"""
-        try:
-            stmts = node._filter_stmts(self.locals[name], self, offset)
-        except KeyError:
-            stmts = ()
-        if stmts:
-            return self, stmts
-        if self.parent: # i.e. not Module
-            # nested scope: if parent scope is a function, that's fine
-            # else jump to the module
-            pscope = self.parent.scope()
-            if not pscope.is_function:
-                pscope = pscope.root()
-            return pscope.scope_lookup(node, name)
-        return builtin_lookup(name) # Module
-
-    def set_local(self, name, stmt):
-        raise Exception('Attempted locals mutation.')
-
-    # def set_local(self, name, stmt):
-    #     """define <name> in locals (<stmt> is the node defining the name)
-    #     if the node is a Module node (i.e. has globals), add the name to
-    #     globals
-
-    #     if the name is already defined, ignore it
-    #     """
-    #     #assert not stmt in self.locals.get(name, ()), (self, stmt)
-    #     self.locals.setdefault(name, []).append(stmt)
-
-    __setitem__ = set_local
-
-    # def _append_node(self, child):
-    #     """append a child, linking it in the tree"""
-    #     self.body.append(child)
-    #     child.parent = self
-
-    # def add_local_node(self, child_node, name=None):
-    #     """append a child which should alter locals to the given node"""
-    #     if name != '__class__':
-    #         # add __class__ node as a child will cause infinite recursion later!
-    #         self._append_node(child_node)
-    #     self.set_local(name or child_node.name, child_node)
-
-    def __getitem__(self, item):
-        """method from the `dict` interface returning the first node
-        associated with the given name in the locals dictionary
-
-        :type item: str
-        :param item: the name of the locally defined object
-        :raises KeyError: if the name is not defined
-        """
-        return self.locals[item][0]
-
-    def __iter__(self):
-        """method from the `dict` interface returning an iterator on
-        `self.keys()`
-        """
-        return iter(self.locals)
-
-    def keys(self):
-        """method from the `dict` interface returning a tuple containing
-        locally defined names
-        """
-        return self.locals.keys()
-
-    def values(self):
-        """method from the `dict` interface returning a tuple containing
-        locally defined nodes which are instance of `FunctionDef` or `ClassDef`
-        """
-        return tuple(v[0] for v in self.locals.values())
-
-    def items(self):
-        """method from the `dict` interface returning a list of tuple
-        containing each locally defined name with its associated node,
-        which is an instance of `FunctionDef` or `ClassDef`
-        """
-        return tuple((k, v[0]) for k, v in self.locals.items())
-
-    def __contains__(self, name):
-        return name in self.locals
+    def qname(node):
+        """Return the 'qualified' name of the node."""
+        if node.parent is None:
+            return node.name
+        return '%s.%s' % (node.parent.frame().qname(), node.name)
 
 
 @util.register_implementation(treeabc.Module)
-class Module(LocalsDictNodeNG):
+class Module(QualifiedNameMixin, lookup.LocalsDictNode):
     _astroid_fields = ('body',)
 
     fromlineno = 0
@@ -326,49 +205,9 @@ class Module(LocalsDictNodeNG):
     def postinit(self, body=None):
         self.body = body
 
-    # Legacy API aliases
-    @property
-    def file(self):
-        util.rename_warning(('file', 'source_file'))
-        return self.source_file
-    @file.setter
-    def file(self, source_file):
-        util.rename_warning(('file', 'source_file'))
-        self.source_file = source_file
-    @file.deleter
-    def file(self):
-        util.rename_warning(('file', 'source_file'))
-        del self.source_file
-
-    @property
-    def path(self):
-        util.rename_warning(('path', 'source_file'))
-        return self.source_file
-    @path.setter
-    def path(self, source_file):
-        util.rename_warning(('path', 'source_file'))
-        self.source_file = source_file
-    @path.deleter
-    def path(self):
-        util.rename_warning(('path', 'source_file'))
-        del self.source_file
-
-    @property
-    def files_bytes(self):
-        util.rename_warning(('files_bytes', 'source_code'))
-        return self.source_code
-    @files_bytes.setter
-    def files_bytes(self, source_code):
-        util.rename_warning(('files_bytes', 'source_code'))
-        self.source_code = source_code
-    @files_bytes.deleter
-    def files_bytes(self):
-        util.rename_warning(('files_bytes', 'source_code'))
-        del self.source_code
-
     @property
     def globals(self):
-        return MappingProxyType(get_locals(self))
+        return MappingProxyType(lookup.get_locals(self))
 
     @property
     def future_imports(self):
@@ -403,24 +242,9 @@ class Module(LocalsDictNodeNG):
             return stream
         return None
 
-    @property
-    def file_stream(self):
-        util.attr_to_method_warning(('file_stream', type(self).__name__))
-        return self._get_stream()
-
     def stream(self):
         """Get a stream to the underlying file or bytes."""
         return self._get_stream()
-
-    def close(self):
-        """Close the underlying file streams."""
-        warnings.warn("The close method is deprecated and is "
-                      "slated for removal in astroid 1.6, along "
-                      "with 'file_stream'. "
-                      "Its behavior is replaced by managing each "
-                      "file stream returned by the 'stream' method.",
-                      PendingDeprecationWarning,
-                      stacklevel=2)
 
     def block_range(self, lineno):
         """return block line numbers.
@@ -460,7 +284,7 @@ class Module(LocalsDictNodeNG):
         elif self.package:
             try:
                 result = [self.import_module(name, relative_only=True)]
-            except (exceptions.AstroidBuildingException, SyntaxError):
+            except (exceptions.AstroidBuildingError, SyntaxError):
                 util.reraise(exceptions.AttributeInferenceError(target=self,
                                                                 attribute=name,
                                                                 context=context))
@@ -521,7 +345,7 @@ class Module(LocalsDictNodeNG):
         absmodname = self.relative_to_absolute_name(modname, level)
         try:
             return MANAGER.ast_from_module_name(absmodname)
-        except exceptions.AstroidBuildingException:
+        except exceptions.AstroidBuildingError:
             # we only want to import a sub module or package of this module,
             # skip here
             if relative_only:
@@ -541,6 +365,10 @@ class Module(LocalsDictNodeNG):
         if level:
             if self.package:
                 level = level - 1
+            if level and self.name.count('.') < level:
+                raise exceptions.TooManyLevelsError(
+                    level=level, name=self.name)
+
             package_name = self.name.rsplit('.', level)[0]
         elif self.package:
             package_name = self.name
@@ -566,6 +394,7 @@ class Module(LocalsDictNodeNG):
             all = self['__all__']
         else:
             return default
+
         try:
             explicit = next(all.assigned_stmts())
         except exceptions.InferenceError:
@@ -602,11 +431,11 @@ class Module(LocalsDictNodeNG):
         return True
 
 
-class ComprehensionScope(LocalsDictNodeNG):
+class ComprehensionScope(lookup.LocalsDictNode):
     def frame(self):
         return self.parent.frame()
 
-    scope_lookup = LocalsDictNodeNG._scope_lookup
+    scope_lookup = lookup.LocalsDictNode._scope_lookup
 
 
 @util.register_implementation(treeabc.GeneratorExp)
@@ -929,9 +758,12 @@ class CallSite(object):
             kwarg = node_classes.Dict(lineno=self._funcnode.args.lineno,
                                       col_offset=self._funcnode.args.col_offset,
                                       parent=self._funcnode.args)
-            kwarg.postinit([(node_classes.Const(key, parent=kwarg), value)
-                            for key, value in kwargs.items()])
+            items = [(node_classes.Const(key, parent=kwarg), value)
+                     for key, value in kwargs.items()]
+            keys, values = zip(*items)
+            kwarg.postinit(keys, values)
             return iter((kwarg, ))
+
         elif self._funcnode.args.vararg == name:
             # It wants all the args that were passed into
             # the call site.
@@ -960,8 +792,53 @@ class CallSite(object):
                                         func=self._funcnode, arg=name, context=context)
 
 
+class LambdaFunctionMixin(QualifiedNameMixin, base.FilterStmtsMixin):
+    """Common code for lambda and functions."""
+
+    def called_with(self, args, keywords):
+        """Get a CallSite object with the given arguments
+
+        Given these arguments, this will return an object
+        which considers them as being passed into the current function,
+        which can then be used to infer their values.
+        `args` needs to be a list of arguments, while `keywords`
+        needs to be a list of tuples, where each tuple is formed
+        by a keyword name and a keyword value.
+        """
+        return CallSite(self, args, keywords)
+
+    def scope_lookup(self, node, name, offset=0):
+        if node in self.args.defaults or node in self.args.kw_defaults:
+            frame = self.parent.frame()
+            # line offset to avoid that def func(f=func) resolve the default
+            # value to the defined function
+            offset = -1
+        else:
+            # check this is not used in function decorators
+            frame = self
+        return frame._scope_lookup(node, name, offset)
+
+    def argnames(self):
+        """return a list of argument names"""
+        if self.args.args: # maybe None with builtin functions
+            names = _rec_get_names(self.args.args)
+        else:
+            names = []
+        if self.args.vararg:
+            names.append(self.args.vararg)
+        if self.args.kwarg:
+            names.append(self.args.kwarg)
+        return names
+
+    def callable(self):
+        return True
+
+    def bool_value(self):
+        return True
+
+
 @util.register_implementation(treeabc.Lambda)
-class Lambda(mixins.FilterStmtsMixin, LocalsDictNodeNG):
+class Lambda(LambdaFunctionMixin, lookup.LocalsDictNode):
     _astroid_fields = ('args', 'body',)
     _other_other_fields = ('locals',)
     name = '<lambda>'
@@ -984,63 +861,19 @@ class Lambda(mixins.FilterStmtsMixin, LocalsDictNodeNG):
     #     return MappingProxyType(get_external_assignments(self, collections.defaultdict(list)))
 
     def pytype(self):
-        if 'method' in self.type:
-            return '%s.instancemethod' % BUILTINS
         return '%s.function' % BUILTINS
 
     def display_type(self):
-        if 'method' in self.type:
-            return 'Method'
         return 'Function'
-
-    def callable(self):
-        return True
-
-    def argnames(self):
-        """return a list of argument names"""
-        if self.args.args: # maybe None with builtin functions
-            names = _rec_get_names(self.args.args)
-        else:
-            names = []
-        if self.args.vararg:
-            names.append(self.args.vararg)
-        if self.args.kwarg:
-            names.append(self.args.kwarg)
-        return names
 
     def infer_call_result(self, caller, context=None):
         """infer what a function is returning when called"""
         return self.body.infer(context)
 
-    def scope_lookup(self, node, name, offset=0):
-        if node in self.args.defaults or node in self.args.kw_defaults:
-            frame = self.parent.frame()
-            # line offset to avoid that def func(f=func) resolve the default
-            # value to the defined function
-            offset = -1
-        else:
-            # check this is not used in function decorators
-            frame = self
-        return frame._scope_lookup(node, name, offset)
-
-    def bool_value(self):
-        return True
-
-    def called_with(self, args, keywords):
-        """Get a CallSite object with the given arguments
-
-        Given these arguments, this will return an object
-        which considers them as being passed into the current function,
-        which can then be used to infer their values.
-        `args` needs to be a list of arguments, while `keywords`
-        needs to be a list of tuples, where each tuple is formed
-        by a keyword name and a keyword value.
-        """
-        return CallSite(self, args, keywords)
-
 
 @util.register_implementation(treeabc.FunctionDef)
-class FunctionDef(node_classes.Statement, Lambda):
+class FunctionDef(LambdaFunctionMixin, lookup.LocalsDictNode,
+                  node_classes.Statement):
     '''Setting FunctionDef.args to Unknown, rather than an Arguments node,
     means that the corresponding function's arguments are unknown,
     probably because it represents a function implemented in C or that
@@ -1070,7 +903,7 @@ class FunctionDef(node_classes.Statement, Lambda):
                  col_offset=None, parent=None):
         self.name = name
         self.doc = doc
-        self.instance_attrs = {}
+        self.instance_attrs = collections.defaultdict(list)
         super(FunctionDef, self).__init__(lineno, col_offset, parent)
 
     # pylint: disable=arguments-differ; different than Lambdas
@@ -1079,6 +912,16 @@ class FunctionDef(node_classes.Statement, Lambda):
         self.body = body
         self.decorators = decorators
         self.returns = returns
+
+    def pytype(self):
+        if 'method' in self.type:
+            return '%s.instancemethod' % BUILTINS
+        return '%s.function' % BUILTINS
+
+    def display_type(self):
+        if 'method' in self.type:
+            return 'Method'
+        return 'Function'
 
     @decorators_mod.cachedproperty
     def extra_decorators(self):
@@ -1314,9 +1157,6 @@ class FunctionDef(node_classes.Statement, Lambda):
                 except exceptions.InferenceError:
                     yield util.Uninferable
 
-    def bool_value(self):
-        return True
-
 
 @util.register_implementation(treeabc.AsyncFunctionDef)
 class AsyncFunctionDef(FunctionDef):
@@ -1421,7 +1261,8 @@ def get_wrapping_class(node):
 
 
 @util.register_implementation(treeabc.ClassDef)
-class ClassDef(mixins.FilterStmtsMixin, LocalsDictNodeNG,
+class ClassDef(QualifiedNameMixin, base.FilterStmtsMixin,
+               lookup.LocalsDictNode,
                node_classes.Statement):
 
     # some of the attributes below are set by the builder module or
@@ -1466,7 +1307,7 @@ class ClassDef(mixins.FilterStmtsMixin, LocalsDictNodeNG,
     @property
     def locals(self):
         # return get_locals(self)
-        return MappingProxyType(get_locals(self))
+        return MappingProxyType(lookup.get_locals(self))
 
     # @property
     # def instance_attrs(self):
@@ -1620,7 +1461,7 @@ class ClassDef(mixins.FilterStmtsMixin, LocalsDictNodeNG,
             context = contextmod.InferenceContext()
         if six.PY3:
             if not self.bases and self.qname() != 'builtins.object':
-                yield builtin_lookup("object")[1][0]
+                yield lookup.builtin_lookup("object")[1][0]
                 return
 
         for stmt in self.bases:
@@ -1890,7 +1731,7 @@ class ClassDef(mixins.FilterStmtsMixin, LocalsDictNodeNG,
         """
 
         if self.newstyle:
-            return builtin_lookup('type')[1][0]
+            return lookup.builtin_lookup('type')[1][0]
 
     _metaclass = None
     def declared_metaclass(self):
@@ -2020,16 +1861,7 @@ class ClassDef(mixins.FilterStmtsMixin, LocalsDictNodeNG,
                 except exceptions.InferenceError:
                     continue
 
-    # Cached, because inferring them all the time is expensive
-    @decorators_mod.cached
-    def slots(self):
-        """Get all the slots for this node.
-
-        If the class doesn't define any slot, through `__slots__`
-        variable, then this function will return a None.
-        Also, it will return None in the case the slots weren't inferred.
-        Otherwise, it will return a list of slot names.
-        """
+    def _slots(self):
         if not self.newstyle:
             raise TypeError(
                 "The concept of slots is undefined for old-style classes.")
@@ -2044,6 +1876,39 @@ class ClassDef(mixins.FilterStmtsMixin, LocalsDictNodeNG,
             return None
         # pylint: disable=unsupported-binary-operation; false positive
         return [first] + list(slots)
+
+    # Cached, because inferring them all the time is expensive
+    @decorators_mod.cached
+    def slots(self):
+        """Get all the slots for this node.
+
+        If the class doesn't define any slot, through `__slots__`
+        variable, then this function will return a None.
+        Also, it will return None in the case the slots weren't inferred.
+        Otherwise, it will return a list of slot names.
+        """
+        def grouped_slots():
+            # Not interested in object, since it can't have slots.
+            for cls in self.mro()[:-1]:
+                try:
+                    cls_slots = cls._slots()
+                except NotImplementedError:
+                    continue
+                if cls_slots is not None:
+                    for slot in cls_slots:
+                        yield slot
+                else:
+                    yield None
+
+        if not self.newstyle:
+            raise TypeError(
+                "The concept of slots is undefined for old-style classes.")
+
+        slots = list(grouped_slots())
+        if not all(slot is not None for slot in slots):
+            return None
+
+        return sorted(slots, key=lambda item: item.value)
 
     def _inferred_bases(self, context=None):
         # TODO(cpopa): really similar with .ancestors,
@@ -2064,7 +1929,7 @@ class ClassDef(mixins.FilterStmtsMixin, LocalsDictNodeNG,
             context = contextmod.InferenceContext()
         if six.PY3:
             if not self.bases and self.qname() != 'builtins.object':
-                yield builtin_lookup("object")[1][0]
+                yield lookup.builtin_lookup("object")[1][0]
                 return
 
         for stmt in self.bases:
@@ -2116,148 +1981,6 @@ class ClassDef(mixins.FilterStmtsMixin, LocalsDictNodeNG,
         return True
 
 
-@_singledispatch
-def get_locals(node):
-    '''Return the local variables for an appropriate node.
-
-    For function nodes, this will be the local variables defined in
-    their scope, what would be returned by a locals() call in the
-    function body.  For Modules, this will be all the global names
-    defined in the module, what would be returned by a locals() or
-    globals() call at the module level.  For classes, this will be
-    class attributes defined in the class body, also what a locals()
-    call in the body would return.
-
-    This function starts by recursing over its argument's children to
-    avoid incorrectly adding a class's, function's, or module's name
-    to its own local variables.
-
-    Args:
-        node (LocalsDictNodeNG): A node defining a scope to return locals for.
-
-    Returns:
-        A defaultdict(list) mapping names (strings) to lists of nodes.
-
-    Raises:
-        TypeError: When called on a node that doesn't represent a scope or a 
-            non-node object.
-    '''
-    raise TypeError("This isn't an astroid node: %s" % type(node))
-
-# pylint: disable=unused-variable; doesn't understand singledispatch
-@get_locals.register(base.NodeNG)
-def not_scoped_node(node):
-    raise TypeError("This node doesn't have local variables: %s" % type(node))
-
-# pylint: disable=unused-variable; doesn't understand singledispatch
-@get_locals.register(LocalsDictNodeNG)
-def scoped_node(node):
-    locals_ = collections.defaultdict(list)
-    for n in node.get_children():
-        _get_locals(n, locals_)
-    return locals_
-
-
-@_singledispatch
-def _get_locals(node, locals_):
-    '''Return the local variables for a node.
-
-    This is the internal recursive generic function for gathering
-    nodes into a local variables mapping.  The locals mapping is
-    passed down and mutated by each function.
-
-    Args:
-        node (NodeNG): The node to inspect for assignments to locals.
-        locals_ (defaultdict(list)): A mapping of (strings) to lists of nodes.
-
-    Raises:
-        TypeError: When called on a non-node object.
-
-    '''
-
-    raise TypeError('Non-astroid object in an astroid AST: %s' % type(node))
-
-# pylint: disable=unused-variable; doesn't understand singledispatch
-@_get_locals.register(base.NodeNG)
-def locals_generic(node, locals_):
-    '''Generic nodes don't create name bindings or scopes.'''
-    for n in node.get_children():
-        _get_locals(n, locals_)
-
-# # pylint: disable=unused-variable; doesn't understand singledispatch
-@_get_locals.register(LocalsDictNodeNG)
-def locals_new_scope(node, locals_):
-    '''These nodes start a new scope, so terminate recursion here.'''
-
-# pylint: disable=unused-variable; doesn't understand singledispatch
-@_get_locals.register(node_classes.AssignName)
-@_get_locals.register(node_classes.DelName)
-@_get_locals.register(FunctionDef)
-@_get_locals.register(ClassDef)
-def locals_name(node, locals_):
-    '''These nodes add a name to the local variables.  AssignName and
-    DelName have no children while FunctionDef and ClassDef start a
-    new scope so shouldn't be recursed into.'''
-    locals_[node.name].append(node)
-
-# pylint: disable=unused-variable; doesn't understand singledispatch
-@_get_locals.register(node_classes.InterpreterObject)
-def locals_interpreter_object(node, locals_):
-    '''InterpreterObjects add an object to the local variables under a specified
-    name.'''
-    if node.name:
-        locals_[node.name].append(node)
-
-# pylint: disable=unused-variable; doesn't understand singledispatch
-@_get_locals.register(node_classes.ReservedName)
-def locals_reserved_name(node, locals_):
-    '''InterpreterObjects add an object to the local variables under a specified
-    name.'''
-    locals_[node.name].append(node.value)
-
-# pylint: disable=unused-variable; doesn't understand singledispatch
-@_get_locals.register(node_classes.Arguments)
-def locals_arguments(node, locals_):
-    '''Other names assigned by functions have AssignName nodes that are
-    children of an Arguments node.'''
-    if node.vararg:
-        locals_[node.vararg].append(node)
-    if node.kwarg:
-        locals_[node.kwarg].append(node)
-    for n in node.get_children():
-        _get_locals(n, locals_)
-
-# pylint: disable=unused-variable; doesn't understand singledispatch
-@_get_locals.register(node_classes.Import)
-def locals_import(node, locals_):
-    for name, asname in node.names:
-        name = asname or name
-        locals_[name.split('.')[0]].append(node)
-
-# pylint: disable=unused-variable; doesn't understand singledispatch
-@_get_locals.register(node_classes.ImportFrom)
-def locals_import_from(node, locals_):
-    # Don't add future imports to locals.
-    if node.modname == '__future__':
-        return
-    # Inherited code, I don't know why this function sorts this list.
-    def sort_locals(my_list):
-        my_list.sort(key=lambda node: node.fromlineno)
-
-    for name, asname in node.names:
-        if name == '*':
-            try:
-                imported = node.do_import_module()
-            except exceptions.InferenceError:
-                continue
-            for name in imported.wildcard_import_names():
-                locals_[name].append(node)
-                sort_locals(locals_[name])
-        else:
-            locals_[asname or name].append(node)
-            sort_locals(locals_[asname or name])
-
-
 def replace_child(tree, to_replace, replace_with):
     '''Replaces the first occurrence of a name in the body of a scoped node.
 
@@ -2292,9 +2015,3 @@ def replace_child(tree, to_replace, replace_with):
                 else:
                     if getattr(node, field) is not None:
                         stack.append(getattr(node, field))
-
-
-# Backwards-compatibility aliases
-Class = util.proxy_alias('Class', ClassDef)
-Function = util.proxy_alias('Function', FunctionDef)
-GenExpr = util.proxy_alias('GenExpr', GeneratorExp)

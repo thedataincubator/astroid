@@ -88,7 +88,7 @@ class AstroidManager(object):
             return builder.AstroidBuilder(self).file_build(filepath, modname)
         elif fallback and modname:
             return self.ast_from_module_name(modname)
-        raise exceptions.AstroidBuildingException(
+        raise exceptions.AstroidBuildingError(
             'Unable to build an AST for {path}.', path=filepath)
 
     def _build_stub_module(self, modname):
@@ -125,24 +125,24 @@ class AstroidManager(object):
                 try:
                     module = modutils.load_module_from_name(modname)
                 except Exception as ex: # pylint: disable=broad-except
-                    util.reraise(exceptions.AstroidBuildingException(
+                    util.reraise(exceptions.AstroidImportError(
                         'Loading {modname} failed with:\n{error}',
                         modname=modname, path=filepath, error=ex))
                 return self.ast_from_module(module, modname)
             elif mp_type == imp.PY_COMPILED:
-                raise exceptions.AstroidBuildingException(
+                raise exceptions.AstroidImportError(
                     "Unable to load compiled module {modname}.",
                     modname=modname, path=filepath)
             if filepath is None:
-                raise exceptions.AstroidBuildingException(
+                raise exceptions.AstroidImportError(
                     "Can't find a file for module {modname}.",
                     modname=modname)
             return self.ast_from_file(filepath, modname, fallback=False)
-        except exceptions.AstroidBuildingException as e:
+        except exceptions.AstroidBuildingError as e:
             for hook in self._failed_import_hooks:
                 try:
                     return hook(modname)
-                except exceptions.AstroidBuildingException:
+                except exceptions.AstroidBuildingError:
                     pass
             raise e
         finally:
@@ -179,13 +179,13 @@ class AstroidManager(object):
                     modname.split('.'), context_file=contextfile)
                 traceback = sys.exc_info()[2]
             except ImportError as ex:
-                value = exceptions.AstroidBuildingException(
+                value = exceptions.AstroidImportError(
                     'Failed to import module {modname} with error:\n{error}.',
                     modname=modname, error=ex)
                 traceback = sys.exc_info()[2]
             self._mod_file_cache[(modname, contextfile)] = value
-        if isinstance(value, exceptions.AstroidBuildingException):
-            six.reraise(exceptions.AstroidBuildingException,
+        if isinstance(value, exceptions.AstroidBuildingError):
+            six.reraise(exceptions.AstroidBuildingError,
                         value, traceback)
         return value
 
@@ -205,13 +205,20 @@ class AstroidManager(object):
         self.astroid_cache[modname] = mock_ast
         return mock_ast
 
+    def builtins(self):
+        """Get the builtins module
+
+        This module is special since it's always built.
+        """
+        return self.astroid_cache[six.moves.builtins.__name__]
+
     def register_failed_import_hook(self, hook):
         """Registers a hook to resolve imports that cannot be found otherwise.
 
         `hook` must be a function that accepts a single argument `modname` which
         contains the name of the module or package that could not be imported.
         If `hook` can resolve the import, must return a node of type `astroid.Module`,
-        otherwise, it must raise `AstroidBuildingException`.
+        otherwise, it must raise `AstroidBuildingError`.
         """
         self._failed_import_hooks.append(hook)
 

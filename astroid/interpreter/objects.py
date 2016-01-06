@@ -61,7 +61,7 @@ PROPERTIES = {BUILTINS + '.property', 'abc.abstractproperty'}
 POSSIBLE_PROPERTIES = {"cached_property", "cachedproperty",
                        "lazyproperty", "lazy_property", "reify",
                        "lazyattribute", "lazy_attribute",
-                       "LazyProperty"}
+                       "LazyProperty", "lazy"}
 
 
 def is_property(meth):
@@ -363,7 +363,7 @@ class Generator(BaseInstance):
 
     @decorators.cachedproperty
     def _proxied(self):
-        builtins = MANAGER.astroid_cache[BUILTINS]
+        builtins = MANAGER.builtins()
         return builtins.getattr(types.GeneratorType.__name__)[0]
 
 
@@ -376,7 +376,7 @@ class FrozenSet(base.BaseContainer, Instance):
 
     @decorators.cachedproperty
     def _proxied(self):
-        builtins = MANAGER.astroid_cache[BUILTINS]
+        builtins = MANAGER.builtins()
         return builtins.getattr('frozenset')[0]
 
 
@@ -441,7 +441,7 @@ class Super(base.NodeNG):
 
     @decorators.cachedproperty
     def _proxied(self):
-        builtins = MANAGER.astroid_cache[BUILTINS]
+        builtins = MANAGER.builtins()
         return builtins.getattr('super')[0]
 
     def pytype(self):

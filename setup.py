@@ -20,14 +20,18 @@
 """Setup script for astroid."""
 import os
 from setuptools import setup, find_packages
+from setuptools.command import easy_install
 from setuptools.command import install_lib
 
-pkginfo = 'astroid/__pkginfo__.py'
+
+real_path = os.path.realpath(__file__)
+astroid_dir = os.path.dirname(real_path)
+pkginfo = os.path.join(astroid_dir, 'astroid', '__pkginfo__.py')
 
 with open(pkginfo, 'rb') as fobj:
     exec(compile(fobj.read(), pkginfo, 'exec'), locals())
 
-with open('README') as fobj:
+with open(os.path.join(astroid_dir, 'README.rst')) as fobj:
     long_description = fobj.read()
 
 class AstroidInstallLib(install_lib.install_lib):
@@ -36,6 +40,15 @@ class AstroidInstallLib(install_lib.install_lib):
         files = [f for f in files if test_datadir not in f]
         install_lib.install_lib.byte_compile(self, files)
 
+
+class AstroidEasyInstallLib(easy_install.easy_install):
+    # override this since pip/easy_install attempt to byte compile
+    # test data files, some of them being syntactically wrong by design,
+    # and this scares the end-user
+    def byte_compile(self, files):
+        test_datadir = os.path.join('astroid', 'tests', 'testdata')
+        files = [f for f in files if test_datadir not in f]
+        easy_install.easy_install.byte_compile(self, files)
 
 
 def install():
@@ -51,7 +64,8 @@ def install():
                  include_package_data = True,
                  install_requires = install_requires,
                  packages = find_packages(),
-                 cmdclass={'install_lib': AstroidInstallLib}
+                 cmdclass={'install_lib': AstroidInstallLib,
+                           'easy_install': AstroidEasyInstallLib}
                  )
 
 

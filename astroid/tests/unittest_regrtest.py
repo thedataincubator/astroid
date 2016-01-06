@@ -288,6 +288,28 @@ def test():
         ''')
         self.assertRaises(exceptions.InferenceError, next, node.infer())
 
+    def test_unicode_in_docstring(self):
+        # Crashed for astroid==1.4.1
+        # Test for https://bitbucket.org/logilab/astroid/issues/273/
+
+        # In a regular file, "coding: utf-8" would have been used.
+        node = extract_node(u'''
+        from __future__ import unicode_literals
+
+        class MyClass(object):
+            def method(self):
+                "With unicode : %s "
+
+        instance = MyClass()
+        ''' % u"\u2019")
+
+        next(node.value.infer()).as_string()
+
+    def test_qname_not_on_generatorexp(self):
+        node = extract_node('''(i for i in range(10))''')
+        with self.assertRaises(AttributeError):
+            node.qname
+
 
 class Whatever(object):
     a = property(lambda x: x, lambda x: x)

@@ -42,7 +42,7 @@ class AstroidError(Exception):
         return self.message.format(**vars(self))
 
 
-class AstroidBuildingException(AstroidError):
+class AstroidBuildingError(AstroidError):
     """exception class when we are unable to build an astroid representation
 
     Standard attributes:
@@ -51,7 +51,30 @@ class AstroidBuildingException(AstroidError):
     """
 
     def __init__(self, message='Failed to import module {modname}.', **kws):
-        super(AstroidBuildingException, self).__init__(message, **kws)
+        super(AstroidBuildingError, self).__init__(message, **kws)
+
+
+class AstroidImportError(AstroidBuildingError):
+    """Exception class used when a module can't be imported by astroid."""
+
+
+class TooManyLevelsError(AstroidImportError):
+    """Exception class which is raised when a relative import was beyond the top-level.
+
+    Standard attributes:
+        level: The level which was attempted.
+        name: the name of the module on which the relative import was attempted.
+    """
+    level = None
+    name = None
+
+    def __init__(self, message='Relative import with too many levels '
+                               '({level}) for module {name!r}', **kws):
+        super(TooManyLevelsError, self).__init__(message, **kws)
+
+
+class AstroidSyntaxError(AstroidBuildingError):
+    """Exception class used when a module can't be parsed."""
 
 
 class NoDefault(AstroidError):
@@ -96,8 +119,10 @@ class MroError(ResolveError):
                               for m in self.mros)
         return self.message.format(mros=mro_names, cls=self.cls)
 
+
 class DuplicateBasesError(MroError):
     """Error raised when there are duplicate bases in the same class bases."""
+
 
 class InconsistentMroError(MroError):
     """Error raised when a class's MRO is inconsistent."""

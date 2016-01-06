@@ -31,7 +31,6 @@ from astroid import inference
 from astroid.interpreter import runtimeabc
 from astroid.interpreter import objects
 from astroid import manager
-from astroid import mixins
 from astroid import protocols
 from astroid.tree import base
 from astroid.tree import treeabc
@@ -100,7 +99,7 @@ class AssignedStmtsMixin(object):
 # Name classes
 
 @util.register_implementation(treeabc.AssignName)
-class AssignName(mixins.LookupMixIn, mixins.ParentAssignTypeMixin,
+class AssignName(base.LookupMixIn, base.ParentAssignTypeMixin,
                  AssignedStmtsMixin, base.NodeNG):
     """class representing an AssignName node"""
     _other_fields = ('name',)
@@ -113,7 +112,7 @@ class AssignName(mixins.LookupMixIn, mixins.ParentAssignTypeMixin,
 
 
 @util.register_implementation(treeabc.DelName)
-class DelName(mixins.LookupMixIn, mixins.ParentAssignTypeMixin, base.NodeNG):
+class DelName(base.LookupMixIn, base.ParentAssignTypeMixin, base.NodeNG):
     """class representing a DelName node"""
     _other_fields = ('name',)
 
@@ -123,7 +122,7 @@ class DelName(mixins.LookupMixIn, mixins.ParentAssignTypeMixin, base.NodeNG):
 
 
 @util.register_implementation(treeabc.Name)
-class Name(mixins.LookupMixIn, base.NodeNG):
+class Name(base.LookupMixIn, base.NodeNG):
     """class representing a Name node"""
     _other_fields = ('name',)
 
@@ -133,7 +132,7 @@ class Name(mixins.LookupMixIn, base.NodeNG):
 
 
 @util.register_implementation(treeabc.Arguments)
-class Arguments(mixins.AssignTypeMixin, AssignedStmtsMixin, base.NodeNG):
+class Arguments(base.AssignTypeMixin, AssignedStmtsMixin, base.NodeNG):
     """class representing an Arguments node"""
     if six.PY3:
         # Python 3.4+ uses a different approach regarding annotations,
@@ -293,7 +292,7 @@ class Unknown(base.NodeNG):
 
 
 @util.register_implementation(treeabc.AssignAttr)
-class AssignAttr(mixins.ParentAssignTypeMixin,
+class AssignAttr(base.ParentAssignTypeMixin,
                  AssignedStmtsMixin, base.NodeNG):
     """class representing an AssignAttr node"""
     _astroid_fields = ('expr',)
@@ -323,7 +322,7 @@ class Assert(Statement):
 
 
 @util.register_implementation(treeabc.Assign)
-class Assign(mixins.AssignTypeMixin, AssignedStmtsMixin, Statement):
+class Assign(base.AssignTypeMixin, AssignedStmtsMixin, Statement):
     """class representing an Assign node"""
     _astroid_fields = ('targets', 'value',)
     targets = None
@@ -335,7 +334,7 @@ class Assign(mixins.AssignTypeMixin, AssignedStmtsMixin, Statement):
 
 
 @util.register_implementation(treeabc.AugAssign)
-class AugAssign(mixins.AssignTypeMixin, AssignedStmtsMixin, Statement):
+class AugAssign(base.AssignTypeMixin, AssignedStmtsMixin, Statement):
     """class representing an AugAssign node"""
     _astroid_fields = ('target', 'value')
     _other_fields = ('op',)
@@ -500,10 +499,6 @@ class Comprehension(AssignedStmtsMixin, base.NodeNG):
     def assign_type(self):
         return self
 
-    def ass_type(self):
-        util.rename_warning((type(self).__name__, type(self).__name__))
-        return self.assign_type()
-
     def _get_filtered_stmts(self, lookup_node, node, stmts, mystmt):
         """method used in filter_stmts"""
         if self is mystmt:
@@ -555,7 +550,7 @@ class Const(base.NodeNG, objects.BaseInstance):
 
     @decorators.cachedproperty
     def _proxied(self):
-        builtins = MANAGER.astroid_cache[BUILTINS]
+        builtins = MANAGER.builtins()
         return builtins.getattr(type(self.value).__name__)[0]
 
     
@@ -569,7 +564,7 @@ class NameConstant(Const):
     # @decorators.cachedproperty
     # def _proxied(self):
     #     return self
-    #     # builtins = MANAGER.astroid_cache[BUILTINS]
+    #     # builtins = MANAGER.builtins()
     #     # return builtins.getattr(str(self.value))[0]
 
 
@@ -603,7 +598,7 @@ class Decorators(base.NodeNG):
 
 
 @util.register_implementation(treeabc.DelAttr)
-class DelAttr(mixins.ParentAssignTypeMixin, base.NodeNG):
+class DelAttr(base.ParentAssignTypeMixin, base.NodeNG):
     """class representing a DelAttr node"""
     _astroid_fields = ('expr',)
     _other_fields = ('attrname',)
@@ -618,7 +613,7 @@ class DelAttr(mixins.ParentAssignTypeMixin, base.NodeNG):
 
 
 @util.register_implementation(treeabc.Delete)
-class Delete(mixins.AssignTypeMixin, Statement):
+class Delete(base.AssignTypeMixin, Statement):
     """class representing a Delete node"""
     _astroid_fields = ('targets',)
     targets = None
@@ -631,14 +626,20 @@ class Delete(mixins.AssignTypeMixin, Statement):
 @util.register_implementation(runtimeabc.BuiltinInstance)
 class Dict(base.NodeNG, objects.BaseInstance):
     """class representing a Dict node"""
-    _astroid_fields = ('items',)
+    _astroid_fields = ('keys', 'values')
 
     def __init__(self, lineno=None, col_offset=None, parent=None):
-        self.items = []
+        self.keys = []
+        self.values = []
         super(Dict, self).__init__(lineno, col_offset, parent)
 
-    def postinit(self, items):
-        self.items = items
+    def postinit(self, keys, values):
+        self.keys = keys
+        self.values = values
+
+    @property
+    def items(self):
+        return list(zip(self.keys, self.values))
 
     def pytype(self):
         return '%s.dict' % BUILTINS
@@ -646,21 +647,21 @@ class Dict(base.NodeNG, objects.BaseInstance):
     def get_children(self):
         """get children of a Dict node"""
         # overrides get_children
-        for key, value in self.items:
+        for key, value in zip(self.keys, self.values):
             yield key
             yield value
 
     def last_child(self):
         """override last_child"""
-        if self.items:
-            return self.items[-1][1]
+        if self.values:
+            return self.values[-1]
         return None
 
     def itered(self):
-        return self.items[::2]
+        return self.keys
 
     def getitem(self, lookup_key, context=None):
-        for key, value in self.items:
+        for key, value in zip(self.keys, self.values):
             # TODO(cpopa): no support for overriding yet, {1:2, **{1: 3}}.
             if isinstance(key, DictUnpack):
                 try:
@@ -678,11 +679,11 @@ class Dict(base.NodeNG, objects.BaseInstance):
         raise IndexError(lookup_key)
 
     def bool_value(self):
-        return bool(self.items)
+        return bool(self.keys)
 
     @decorators.cachedproperty
     def _proxied(self):
-        builtins = MANAGER.astroid_cache[BUILTINS]
+        builtins = MANAGER.builtins()
         return builtins.getattr('dict')[0]
 
 
@@ -723,7 +724,7 @@ class InterpreterObject(base.NodeNG):
 
 
 @util.register_implementation(treeabc.ExceptHandler)
-class ExceptHandler(mixins.AssignTypeMixin, AssignedStmtsMixin, Statement):
+class ExceptHandler(base.AssignTypeMixin, AssignedStmtsMixin, Statement):
     """class representing an ExceptHandler node"""
     _astroid_fields = ('type', 'name', 'body',)
     type = None
@@ -777,7 +778,7 @@ class ExtSlice(base.NodeNG):
 
 
 @util.register_implementation(treeabc.For)
-class For(mixins.BlockRangeMixIn, mixins.AssignTypeMixin,
+class For(base.BlockRangeMixIn, base.AssignTypeMixin,
           AssignedStmtsMixin, Statement):
     """class representing a For node"""
     _astroid_fields = ('target', 'iter', 'body', 'orelse',)
@@ -815,7 +816,7 @@ class Await(base.NodeNG):
 
 
 @util.register_implementation(treeabc.ImportFrom)
-class ImportFrom(mixins.ImportFromMixin, Statement):
+class ImportFrom(base.FilterStmtsMixin, Statement):
     """class representing a ImportFrom node"""
     _other_fields = ('modname', 'names', 'level')
 
@@ -825,6 +826,9 @@ class ImportFrom(mixins.ImportFromMixin, Statement):
         self.names = names
         self.level = level
         super(ImportFrom, self).__init__(lineno, col_offset, parent)
+
+    def _infer_name(self, frame, name):
+        return name
 
 
 @util.register_implementation(treeabc.Attribute)
@@ -856,7 +860,7 @@ class Global(Statement):
 
 
 @util.register_implementation(treeabc.If)
-class If(mixins.BlockRangeMixIn, Statement):
+class If(base.BlockRangeMixIn, Statement):
     """class representing an If node"""
     _astroid_fields = ('test', 'body', 'orelse')
     test = None
@@ -897,7 +901,7 @@ class IfExp(base.NodeNG):
 
 
 @util.register_implementation(treeabc.Import)
-class Import(mixins.ImportFromMixin, Statement):
+class Import(base.FilterStmtsMixin, Statement):
     """class representing an Import node"""
     _other_fields = ('names',)
 
@@ -909,6 +913,9 @@ class Import(mixins.ImportFromMixin, Statement):
         context = contextmod.InferenceContext()
         context.lookupname = name
         return self.infer(context, asname=False)
+
+    def _infer_name(self, frame, name):
+        return name
 
 
 @util.register_implementation(treeabc.Index)
@@ -940,6 +947,12 @@ class Keyword(base.NodeNG):
 @util.register_implementation(runtimeabc.BuiltinInstance)
 class List(base.BaseContainer, AssignedStmtsMixin, objects.BaseInstance):
     """class representing a List node"""
+    _other_fields = ('ctx',)
+
+    def __init__(self, ctx=None, lineno=None,
+                 col_offset=None, parent=None):
+        self.ctx = ctx
+        super(List, self).__init__(lineno, col_offset, parent)
 
     def pytype(self):
         return '%s.list' % BUILTINS
@@ -949,7 +962,7 @@ class List(base.BaseContainer, AssignedStmtsMixin, objects.BaseInstance):
 
     @decorators.cachedproperty
     def _proxied(self):
-        builtins = MANAGER.astroid_cache[BUILTINS]
+        builtins = MANAGER.builtins()
         return builtins.getattr('list')[0]
 
 
@@ -1037,7 +1050,7 @@ class Set(base.BaseContainer, objects.BaseInstance):
 
     @decorators.cachedproperty
     def _proxied(self):
-        builtins = MANAGER.astroid_cache[BUILTINS]
+        builtins = MANAGER.builtins()
         return builtins.getattr('set')[0]
 
 
@@ -1062,7 +1075,7 @@ class Slice(base.NodeNG):
 
     @decorators.cachedproperty
     def _proxied(self):
-        builtins = MANAGER.astroid_cache[BUILTINS]
+        builtins = MANAGER.builtins()
         return builtins.getattr('slice')[0]
 
     def pytype(self):
@@ -1084,10 +1097,16 @@ class Slice(base.NodeNG):
 
 
 @util.register_implementation(treeabc.Starred)
-class Starred(mixins.ParentAssignTypeMixin, AssignedStmtsMixin, base.NodeNG):
+class Starred(base.ParentAssignTypeMixin, AssignedStmtsMixin, base.NodeNG):
     """class representing a Starred node"""
     _astroid_fields = ('value',)
+    _other_fields = ('ctx', )
     value = None
+
+    def __init__(self, ctx=None, lineno=None, col_offset=None, parent=None):
+        self.ctx = ctx
+        super(Starred, self).__init__(lineno=lineno,
+                                      col_offset=col_offset, parent=parent)
 
     def postinit(self, value=None):
         self.value = value
@@ -1097,8 +1116,14 @@ class Starred(mixins.ParentAssignTypeMixin, AssignedStmtsMixin, base.NodeNG):
 class Subscript(base.NodeNG):
     """class representing a Subscript node"""
     _astroid_fields = ('value', 'slice')
+    _other_fields = ('ctx', )
     value = None
     slice = None
+
+    def __init__(self, ctx=None, lineno=None, col_offset=None, parent=None):
+        self.ctx = ctx
+        super(Subscript, self).__init__(lineno=lineno,
+                                        col_offset=col_offset, parent=parent)
 
     def postinit(self, value=None, slice=None):
         self.value = value
@@ -1108,7 +1133,7 @@ class Subscript(base.NodeNG):
 
 
 @util.register_implementation(treeabc.TryExcept)
-class TryExcept(mixins.BlockRangeMixIn, Statement):
+class TryExcept(base.BlockRangeMixIn, Statement):
     """class representing a TryExcept node"""
     _astroid_fields = ('body', 'handlers', 'orelse',)
     body = None
@@ -1137,7 +1162,7 @@ class TryExcept(mixins.BlockRangeMixIn, Statement):
 
 
 @util.register_implementation(treeabc.TryFinally)
-class TryFinally(mixins.BlockRangeMixIn, Statement):
+class TryFinally(base.BlockRangeMixIn, Statement):
     """class representing a TryFinally node"""
     _astroid_fields = ('body', 'finalbody',)
     body = None
@@ -1162,6 +1187,13 @@ class TryFinally(mixins.BlockRangeMixIn, Statement):
 class Tuple(base.BaseContainer, AssignedStmtsMixin, objects.BaseInstance):
     """class representing a Tuple node"""
 
+    _other_fields = ('ctx',)
+
+    def __init__(self, ctx=None, lineno=None,
+                 col_offset=None, parent=None):
+        self.ctx = ctx
+        super(Tuple, self).__init__(lineno, col_offset, parent)
+
     def pytype(self):
         return '%s.tuple' % BUILTINS
 
@@ -1170,7 +1202,7 @@ class Tuple(base.BaseContainer, AssignedStmtsMixin, objects.BaseInstance):
 
     @decorators.cachedproperty
     def _proxied(self):
-        builtins = MANAGER.astroid_cache[BUILTINS]
+        builtins = MANAGER.builtins()
         return builtins.getattr('tuple')[0]
 
 
@@ -1207,7 +1239,7 @@ class UnaryOp(base.NodeNG):
 
 
 @util.register_implementation(treeabc.While)
-class While(mixins.BlockRangeMixIn, Statement):
+class While(base.BlockRangeMixIn, Statement):
     """class representing a While node"""
     _astroid_fields = ('test', 'body', 'orelse',)
     test = None
@@ -1229,7 +1261,7 @@ class While(mixins.BlockRangeMixIn, Statement):
 
 
 @util.register_implementation(treeabc.With)
-class With(mixins.BlockRangeMixIn, mixins.AssignTypeMixin,
+class With(base.BlockRangeMixIn, base.AssignTypeMixin,
            AssignedStmtsMixin, Statement):
     """class representing a With node"""
     _astroid_fields = ('items', 'body')
@@ -1276,17 +1308,6 @@ class YieldFrom(Yield):
 @util.register_implementation(treeabc.DictUnpack)
 class DictUnpack(base.NodeNG):
     """Represents the unpacking of dicts into dicts using PEP 448."""
-
-
-# Backward-compatibility aliases
-
-Backquote = util.proxy_alias('Backquote', Repr)
-Discard = util.proxy_alias('Discard', Expr)
-AssName = util.proxy_alias('AssName', AssignName)
-AssAttr = util.proxy_alias('AssAttr', AssignAttr)
-Getattr = util.proxy_alias('Getattr', Attribute)
-CallFunc = util.proxy_alias('CallFunc', Call)
-From = util.proxy_alias('From', ImportFrom)
 
 
 # Register additional inference dispatched functions. We do

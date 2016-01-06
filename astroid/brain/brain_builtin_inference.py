@@ -82,7 +82,7 @@ def _extend_str(class_node, rvalue):
         method.parent = class_node
 
 def extend_builtins(class_transforms):
-    builtin_ast = MANAGER.astroid_cache[BUILTINS]
+    builtin_ast = MANAGER.builtins()
     for class_name, transform in class_transforms.items():
         transform(builtin_ast[class_name])
 
@@ -300,7 +300,7 @@ def infer_dict(node, context=None):
     value = nodes.Dict(col_offset=node.col_offset,
                        lineno=node.lineno,
                        parent=node.parent)
-    value.postinit(items)
+    value.postinit(*zip(*items))
     return value
 
 
@@ -554,8 +554,8 @@ def infer_type_dunder_new(caller, context=None):
         # All the bases needs to be Classes
         raise UseInferenceDefault
 
-    cls = nodes.Class(name=name.value, lineno=caller.lineno,
-                      col_offset=caller.col_offset, parent=caller)
+    cls = nodes.ClassDef(name=name.value, lineno=caller.lineno,
+                         col_offset=caller.col_offset, parent=caller)
 
     # Verify the attributes.
     attrs = next(caller.args[3].infer(context=context))

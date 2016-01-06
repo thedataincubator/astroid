@@ -24,6 +24,7 @@ from astroid import MANAGER
 from astroid import builder
 from astroid import nodes
 from astroid.interpreter import objects
+from astroid.interpreter import util as interpreterutil
 from astroid import test_utils
 from astroid import util
 import astroid
@@ -90,6 +91,7 @@ class HashlibTest(unittest.TestCase):
 
 
 class NamedTupleTest(unittest.TestCase):
+
     def test_namedtuple_base(self):
         klass = test_utils.extract_node("""
         from collections import namedtuple
@@ -151,6 +153,16 @@ class NamedTupleTest(unittest.TestCase):
         inferred = next(result.infer())
         for name, attr in inferred.instance_attrs.items():
             self.assertEqual(attr[0].attrname, name)
+
+    def test_namedtuple_uninferable_fields(self):
+        node = test_utils.extract_node('''
+        x = [A] * 2
+        from collections import namedtuple
+        l = namedtuple('a', x)
+        l(1)
+        ''')        
+        inferred = next(node.infer())
+        self.assertIs(util.Uninferable, inferred)
 
 
 class ModuleExtenderTest(unittest.TestCase):
@@ -287,12 +299,21 @@ class MultiprocessingBrainTest(unittest.TestCase):
         module = test_utils.extract_node("""
         import multiprocessing
         """)
-        module = module.do_import_module('multiprocessing')
+        module = interpreterutil.do_import_module(module, 'multiprocessing')
         cpu_count = next(module.igetattr('cpu_count'))
         if sys.version_info < (3, 4):
             self.assertIsInstance(cpu_count, nodes.FunctionDef)
         else:
             self.assertIsInstance(cpu_count, astroid.BoundMethod)
+
+    def test_module_name(self):
+        module = test_utils.extract_node("""
+        import multiprocessing
+        multiprocessing.SyncManager()
+        """)
+        inferred_sync_mgr = next(module.infer())
+        module = inferred_sync_mgr.root()
+        self.assertEqual(module.name, 'multiprocessing.managers')
 
     def test_multiprocessing_manager(self):
         # Test that we have the proper attributes
@@ -351,6 +372,21 @@ class MultiprocessingBrainTest(unittest.TestCase):
         # Verify that we have these attributes
         self.assertTrue(manager.getattr('start'))
         self.assertTrue(manager.getattr('shutdown'))
+
+class ThreadingBrainTest(unittest.TestCase):
+
+    def test_threading(self):
+        module = test_utils.extract_node("""
+        import threading
+        threading.Lock()
+        """)
+        inferred = next(module.infer())
+        self.assertIsInstance(inferred, astroid.Instance)
+        self.assertEqual(inferred.root().name, 'threading')
+        self.assertIsInstance(inferred.getattr('acquire')[0],
+                              astroid.FunctionDef)
+        self.assertIsInstance(inferred.getattr('release')[0],
+                              astroid.FunctionDef)
 
 
 @unittest.skipUnless(HAS_ENUM,
