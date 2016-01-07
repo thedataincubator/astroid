@@ -1997,7 +1997,7 @@ def replace_child(tree, to_replace, replace_with):
         for field in node._astroid_fields:
             if isinstance(getattr(node, field), collections.Sequence):
                 if any(not isinstance(e, base.NodeNG) for e in getattr(node, field)):
-                    print(getattr(node, field))
+                    print(node.parent, getattr(node, field))
                 if to_replace in getattr(node, field):
                     index = getattr(node, field).index(to_replace)
                     getattr(node, field)[index:index + 1] = replace_with
