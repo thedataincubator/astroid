@@ -78,12 +78,12 @@ class Statement(base.NodeNG):
 class AssignedStmtsMixin(object):
     """Provide an `assigned_stmts` method to classes which inherits it."""
 
-    def assigned_stmts(self, node=None, context=None, asspath=None):
+    def assigned_stmts(self, node=None, context=None, assign_path=None):
         """Responsible to return the assigned statement
         (e.g. not inferred) according to the assignment type.
 
-        The `asspath` parameter is used to record the lhs path of the original node.
-        For instance if we want assigned statements for 'c' in 'a, (b,c)', asspath
+        The `assign_path` parameter is used to record the lhs path of the original node.
+        For instance if we want assigned statements for 'c' in 'a, (b,c)', assign_path
         will be [1, 1] once arrived to the Assign node.
 
         The `context` parameter is the current inference context which should be given
@@ -93,7 +93,7 @@ class AssignedStmtsMixin(object):
         # circular dependencies between these modules.
         return protocols.assigned_stmts(self, sys.modules[__name__],
                                         node=node, context=context,
-                                        asspath=asspath)
+                                        assign_path=assign_path)
 
 
 # Name classes
@@ -458,25 +458,28 @@ class Call(base.NodeNG):
 @util.register_implementation(treeabc.Compare)
 class Compare(base.NodeNG):
     """class representing a Compare node"""
-    _astroid_fields = ('left', 'ops',)
+    _astroid_fields = ('left', 'comparators')
+    _other_fields = ('ops',)
     left = None
-    ops = None
 
-    def postinit(self, left=None, ops=None):
-        self.left = left
+    def __init__(self, ops, lineno=None, col_offset=None, parent=None):
+        self.comparators = []
         self.ops = ops
+        super(Compare, self).__init__(lineno, col_offset, parent)
+
+    def postinit(self, left=None, comparators=None):
+        self.left = left
+        self.comparators = comparators
 
     def get_children(self):
         """override get_children for tuple fields"""
         yield self.left
-        for _, comparator in self.ops:
-            yield comparator # we don't want the 'op'
+        for comparator in self.comparators:
+            yield comparator
 
     def last_child(self):
         """override last_child"""
-        # XXX maybe if self.ops:
-        return self.ops[-1][1]
-        #return self.left
+        return self.comparators[-1]
 
 
 @util.register_implementation(treeabc.Comprehension)
@@ -1265,8 +1268,11 @@ class With(base.BlockRangeMixIn, base.AssignTypeMixin,
            AssignedStmtsMixin, Statement):
     """class representing a With node"""
     _astroid_fields = ('items', 'body')
-    items = None
-    body = None
+
+    def __init__(self, lineno=None, col_offset=None, parent=None):
+        self.items = []
+        self.body = []
+        super(With, self).__init__(lineno, col_offset, parent)
 
     def postinit(self, items=None, body=None):
         self.items = items
@@ -1274,15 +1280,18 @@ class With(base.BlockRangeMixIn, base.AssignTypeMixin,
 
     @decorators.cachedproperty
     def blockstart_tolineno(self):
-        return self.items[-1][0].tolineno
+        return self.items[-1].context_expr.tolineno
 
-    def get_children(self):
-        for expr, var in self.items:
-            yield expr
-            if var:
-                yield var
-        for elt in self.body:
-            yield elt
+
+@util.register_implementation(treeabc.WithItem)
+class WithItem(base.NodeNG, base.ParentAssignTypeMixin, AssignedStmtsMixin):
+    _astroid_fields = ('context_expr', 'optional_vars')
+    context_expr = None
+    optional_vars = None
+
+    def postinit(self, context_expr=None, optional_vars=None):
+        self.context_expr = context_expr
+        self.optional_vars = optional_vars
 
 
 @util.register_implementation(treeabc.AsyncWith)

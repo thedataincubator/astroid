@@ -123,7 +123,7 @@ class AsStringVisitor(object):
     def visit_compare(self, node):
         """return an astroid.Compare node as string"""
         rhs_str = ' '.join(['%s %s' % (op, expr.accept(self))
-                            for op, expr in node.ops])
+                            for op, expr in zip(node.ops, node.comparators)])
         return '%s %s' % (node.left.accept(self), rhs_str)
 
     def visit_comprehension(self, node):
@@ -406,10 +406,12 @@ class AsStringVisitor(object):
 
     def visit_with(self, node): # 'with' without 'as' is possible
         """return an astroid.With node as string"""
-        items = ', '.join(('(%s)' % expr.accept(self)) +
-                          (vars and ' as (%s)' % (vars.accept(self)) or '')
-                          for expr, vars in node.items)
+        items = ', '.join(item.accept(self) for item in node.items)
         return 'with %s:\n%s' % (items, self._stmt_list(node.body))
+
+    def visit_withitem(self, node):
+        return ('(%s)' % node.context_expr.accept(self) + ' as (%s)' %
+                (optional_vars.accept(self)) if optional_vars else '')
 
     def visit_yield(self, node):
         """yield an ast.Yield node as string"""
